@@ -50,7 +50,10 @@ Implementation
 
 from __future__ import annotations
 
+import contextlib
 from contextlib import contextmanager
+import inspect
+import os
 import re
 from typing import (
     TYPE_CHECKING,
@@ -60,7 +63,6 @@ from typing import (
 )
 import warnings
 
-from pandas.util._exceptions import find_stack_level
 
 if TYPE_CHECKING:
     from collections.abc import (
@@ -125,20 +127,52 @@ class OptionError(AttributeError, KeyError):
 # User API
 
 
-def _get_single_key(pat: str) -> str:
+def _get_single_key(
+    pat: str,
+    *,
+    stacklevel: int | None = None,
+    skip_contextlib: bool = False,
+) -> str:
     keys = _select_options(pat)
     if len(keys) == 0:
-        _warn_if_deprecated(pat)
+        _warn_if_deprecated(
+            pat,
+            stacklevel=stacklevel,
+            skip_contextlib=skip_contextlib,
+        )
         raise OptionError(f"No such keys(s): {pat!r}")
     if len(keys) > 1:
         raise OptionError("Pattern matched multiple keys")
     key = keys[0]
 
-    _warn_if_deprecated(key)
+    _warn_if_deprecated(
+        key,
+        stacklevel=stacklevel,
+        skip_contextlib=skip_contextlib,
+    )
 
     key = _translate_key(key)
 
     return key
+
+
+def _get_option_value(key: str) -> Any:
+    """Return the current value for a fully-qualified option key."""
+    root, k = _get_root(key)
+    return root[k]
+
+
+def _set_option_value(key: str, value: Any) -> None:
+    """Set the value for a fully-qualified option key."""
+    opt = _get_registered_option(key)
+    if opt and opt.validator:
+        opt.validator(value)
+
+    root, k_root = _get_root(key)
+    root[k_root] = value
+
+    if opt.cb:
+        opt.cb(key)
 
 
 def get_option(pat: str) -> Any:
@@ -186,10 +220,7 @@ def get_option(pat: str) -> Any:
     4
     """
     key = _get_single_key(pat)
-
-    # walk the nested dict
-    root, k = _get_root(key)
-    return root[k]
+    return _get_option_value(key)
 
 
 def set_option(*args) -> None:
@@ -276,17 +307,7 @@ def set_option(*args) -> None:
 
     for k, v in zip(args[::2], args[1::2], strict=True):
         key = _get_single_key(k)
-
-        opt = _get_registered_option(key)
-        if opt and opt.validator:
-            opt.validator(v)
-
-        # walk the nested dict
-        root, k_root = _get_root(key)
-        root[k_root] = v
-
-        if opt.cb:
-            opt.cb(key)
+        _set_option_value(key, v)
 
 
 def describe_option(pat: str = "", _print_desc: bool = True) -> str | None:
@@ -396,7 +417,7 @@ def reset_option(pat: str) -> None:
         )
 
     for k in keys:
-        set_option(k, _registered_options[k].defval)
+        _set_option_value(k, _registered_options[k].defval)
 
 
 def get_default_val(pat: str):
@@ -508,15 +529,18 @@ def option_context(*args) -> Generator[None]:
         )
 
     ops = tuple(zip(args[::2], args[1::2], strict=True))
-    undo: tuple[tuple[Any, Any], ...] = ()
+    undo: list[tuple[str, Any]] = []
     try:
-        undo = tuple((pat, get_option(pat)) for pat, val in ops)
         for pat, val in ops:
-            set_option(pat, val)
+            key = _get_single_key(pat, skip_contextlib=True)
+            undo.append((key, _get_option_value(key)))
+
+            key = _get_single_key(pat, skip_contextlib=True)
+            _set_option_value(key, val)
         yield
     finally:
-        for pat, val in undo:
-            set_option(pat, val)
+        for key, val in undo:
+            _set_option_value(key, val)
 
 
 def register_option(
@@ -713,9 +737,48 @@ def _translate_key(key: str) -> str:
         return key
 
 
-def _warn_if_deprecated(key: str) -> bool:
+def _get_warning_stacklevel(*, skip_contextlib: bool = False) -> int:
+    """Find the first external stack frame for warning emission."""
+    import pandas as pd
+
+    pkg_dir = os.path.dirname(pd.__file__)
+    test_dir = os.path.join(pkg_dir, "tests")
+    contextlib_file = inspect.getsourcefile(contextlib)
+
+    frame = inspect.currentframe()
+    try:
+        n = 0
+        while frame:
+            filename = inspect.getfile(frame)
+            in_pandas = filename.startswith(pkg_dir) and not filename.startswith(test_dir)
+            in_contextlib = skip_contextlib and filename == contextlib_file
+            if in_pandas or in_contextlib:
+                frame = frame.f_back
+                n += 1
+            else:
+                break
+    finally:
+        del frame
+    return n
+
+
+def _warn_if_deprecated(
+    key: str,
+    *,
+    stacklevel: int | None = None,
+    skip_contextlib: bool = False,
+) -> bool:
     """
     Checks if `key` is a deprecated option and if so, prints a warning.
+
+    Parameters
+    ----------
+    key : str
+        Option key to check.
+    stacklevel : int, optional
+        Warning stacklevel to use. If not provided, infer it from the call stack.
+    skip_contextlib : bool, default False
+        Whether to skip contextlib frames when inferring the warning stacklevel.
 
     Returns
     -------
@@ -723,11 +786,14 @@ def _warn_if_deprecated(key: str) -> bool:
     """
     d = _get_deprecated_option(key)
     if d:
+        stacklevel = stacklevel or _get_warning_stacklevel(
+            skip_contextlib=skip_contextlib
+        )
         if d.msg:
             warnings.warn(
                 d.msg,
                 d.category,
-                stacklevel=find_stack_level(),
+                stacklevel=stacklevel,
             )
         else:
             msg = f"'{key}' is deprecated"
@@ -741,7 +807,7 @@ def _warn_if_deprecated(key: str) -> bool:
             warnings.warn(
                 msg,
                 d.category,
-                stacklevel=find_stack_level(),
+                stacklevel=stacklevel,
             )
         return True
     return False
