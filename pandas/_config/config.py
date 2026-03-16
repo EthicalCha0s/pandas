@@ -750,7 +750,9 @@ def _get_warning_stacklevel(*, skip_contextlib: bool = False) -> int:
         n = 0
         while frame:
             filename = inspect.getfile(frame)
-            in_pandas = filename.startswith(pkg_dir) and not filename.startswith(test_dir)
+            in_pandas = filename.startswith(pkg_dir) and not filename.startswith(
+                test_dir
+            )
             in_contextlib = skip_contextlib and filename == contextlib_file
             if in_pandas or in_contextlib:
                 frame = frame.f_back
