@@ -2165,12 +2165,18 @@ def test_arithmetic_multiindex_add_with_mixed_string_datetime_index():
         columns=["A"],
     )
 
+    expected = DataFrame(
+        data=[20.0, 10.0],
+        index=MultiIndex.from_tuples(
+            [("Z", datetime(2019, 5, 31)), ("Z", "2019-05-31")]
+        ),
+        columns=["A"],
+    )
+
     with tm.assert_produces_warning(RuntimeWarning, match="are unorderable"):
         result = df1.add(df2, fill_value=0)
 
-    assert len(result) == 2
-    assert result.loc[("Z", "2019-05-31"), "A"] == 10
-    assert result.loc[("Z", datetime(2019, 5, 31)), "A"] == 20
+    tm.assert_frame_equal(result, expected)
 
 
 def test_bool_frame_mult_float():
