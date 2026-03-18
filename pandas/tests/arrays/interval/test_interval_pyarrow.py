@@ -158,3 +158,29 @@ def test_from_arrow_from_raw_struct_array():
 
     result = dtype.__from_arrow__(pa.chunked_array([arr]))
     tm.assert_extension_array_equal(result, expected)
+
+
+def test_from_arrow_datetime_tz_subtype():
+    pa = pytest.importorskip("pyarrow")
+
+    from pandas.core.arrays.arrow.extension_types import ArrowIntervalType
+
+    tz = "Europe/Brussels"
+    dtype = pd.IntervalDtype(pd.DatetimeTZDtype("us", tz), closed="right")
+    arr = pa.array(
+        [
+            {
+                "left": pd.Timestamp("2012-01-01", tz=tz),
+                "right": pd.Timestamp("2013-01-01", tz=tz),
+            }
+        ],
+        type=ArrowIntervalType(pa.timestamp("us", tz=tz), "right"),
+    )
+
+    result = dtype.__from_arrow__(arr)
+    expected = IntervalArray.from_arrays(
+        pd.DatetimeIndex([pd.Timestamp("2012-01-01", tz=tz)]),
+        pd.DatetimeIndex([pd.Timestamp("2013-01-01", tz=tz)]),
+        closed="right",
+    )
+    tm.assert_extension_array_equal(result, expected)

@@ -1485,12 +1485,25 @@ class IntervalDtype(PandasExtensionDtype):
         for arr in chunks:
             if isinstance(arr, pyarrow.ExtensionArray):
                 arr = arr.storage
-            left = np.asarray(arr.field("left"), dtype=self.subtype)
-            right = np.asarray(arr.field("right"), dtype=self.subtype)
+            if isinstance(self.subtype, ExtensionDtype):
+                left = self.subtype.__from_arrow__(arr.field("left"))
+                right = self.subtype.__from_arrow__(arr.field("right"))
+            else:
+                left = np.asarray(arr.field("left"), dtype=self.subtype)
+                right = np.asarray(arr.field("right"), dtype=self.subtype)
             iarr = IntervalArray.from_arrays(left, right, closed=self.closed)
             results.append(iarr)
 
         if not results:
+            if isinstance(self.subtype, ExtensionDtype):
+                empty = self.subtype.construct_array_type()._from_sequence(
+                    [], dtype=self.subtype
+                )
+                return IntervalArray.from_arrays(
+                    empty,
+                    empty,
+                    closed=self.closed,
+                )
             return IntervalArray.from_arrays(
                 np.array([], dtype=self.subtype),
                 np.array([], dtype=self.subtype),
