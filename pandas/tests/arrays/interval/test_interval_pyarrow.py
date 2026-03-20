@@ -160,6 +160,30 @@ def test_from_arrow_from_raw_struct_array():
     tm.assert_extension_array_equal(result, expected)
 
 
+def test_from_arrow_with_nullable_subtype():
+    pa = pytest.importorskip("pyarrow")
+
+    from pandas.core.arrays.arrow.extension_types import ArrowIntervalType
+
+    interval_dtype = pd.IntervalDtype(pd.Int64Dtype(), "right")
+    arr = pa.array(
+        [
+            {"left": 1, "right": 2},
+            {"left": 3, "right": 4},
+        ],
+        type=ArrowIntervalType(pa.int64(), "right"),
+    )
+
+    result = interval_dtype.__from_arrow__(arr)
+    expected = IntervalArray.from_arrays(
+        pd.array([1, 3], dtype="Int64"),
+        pd.array([2, 4], dtype="Int64"),
+        closed="right",
+        dtype=interval_dtype,
+    )
+    tm.assert_extension_array_equal(result, expected)
+
+
 def test_from_arrow_datetime_tz_subtype():
     pa = pytest.importorskip("pyarrow")
 
@@ -181,6 +205,27 @@ def test_from_arrow_datetime_tz_subtype():
     expected = IntervalArray.from_arrays(
         pd.DatetimeIndex([pd.Timestamp("2012-01-01", tz=tz)]),
         pd.DatetimeIndex([pd.Timestamp("2013-01-01", tz=tz)]),
+        closed="right",
+    )
+    tm.assert_extension_array_equal(result, expected)
+
+
+def test_from_arrow_empty_datetime_tz_subtype():
+    pa = pytest.importorskip("pyarrow")
+
+    from pandas.core.arrays.arrow.extension_types import ArrowIntervalType
+
+    tz = "Europe/Brussels"
+    dtype = pd.IntervalDtype(pd.DatetimeTZDtype("us", tz), closed="right")
+    arr = pa.array(
+        [],
+        type=ArrowIntervalType(pa.timestamp("us", tz=tz), "right"),
+    )
+
+    result = dtype.__from_arrow__(arr)
+    expected = IntervalArray.from_arrays(
+        pd.DatetimeIndex(pd.array([], dtype=pd.DatetimeTZDtype("us", tz))),
+        pd.DatetimeIndex(pd.array([], dtype=pd.DatetimeTZDtype("us", tz))),
         closed="right",
     )
     tm.assert_extension_array_equal(result, expected)

@@ -1482,33 +1482,37 @@ class IntervalDtype(PandasExtensionDtype):
             chunks = array.chunks
 
         results = []
+        subtype_is_extension = isinstance(self.subtype, ExtensionDtype)
+
         for arr in chunks:
             if isinstance(arr, pyarrow.ExtensionArray):
                 arr = arr.storage
-            if isinstance(self.subtype, ExtensionDtype):
+            if subtype_is_extension:
                 left = self.subtype.__from_arrow__(arr.field("left"))
                 right = self.subtype.__from_arrow__(arr.field("right"))
             else:
                 left = np.asarray(arr.field("left"), dtype=self.subtype)
                 right = np.asarray(arr.field("right"), dtype=self.subtype)
-            iarr = IntervalArray.from_arrays(left, right, closed=self.closed)
+            iarr = IntervalArray.from_arrays(
+                left, right, closed=self.closed, dtype=self
+            )
             results.append(iarr)
 
         if not results:
-            if isinstance(self.subtype, ExtensionDtype):
-                empty = self.subtype.construct_array_type()._from_sequence(
+            if subtype_is_extension:
+                empty_values = self.subtype.construct_array_type()._from_sequence(
                     [], dtype=self.subtype
                 )
-                return IntervalArray.from_arrays(
-                    empty,
-                    empty,
-                    closed=self.closed,
-                )
+            else:
+                empty_values = np.array([], dtype=self.subtype)
             return IntervalArray.from_arrays(
-                np.array([], dtype=self.subtype),
-                np.array([], dtype=self.subtype),
+                empty_values,
+                empty_values.copy(),
                 closed=self.closed,
+                dtype=self,
             )
+        if len(results) == 1:
+            return results[0]
         return IntervalArray._concat_same_type(results)
 
     def _get_common_dtype(self, dtypes: list[DtypeObj]) -> DtypeObj | None:
